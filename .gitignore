@@ -1,2 +1,2 @@
-/target/
-/tests/visual/__pycache__/
+.refs/
+target/
