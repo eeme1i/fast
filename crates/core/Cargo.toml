@@ -1,0 +1,15 @@
+[package]
+name = "fast-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+directories = "6"
+notify-debouncer-full = "0.6"
+regex = "1"
+ropey = "1.6"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+thiserror = "2"
+toml = "1"
+unicode-segmentation = "1"

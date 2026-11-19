@@ -1,0 +1,19 @@
+[package]
+name = "fast"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fast-core.workspace = true
+fast-editor.workspace = true
+fast-lsp.workspace = true
+fast-preview.workspace = true
+fast-theme.workspace = true
+ignore = "0.4.34"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+rune = { workspace = true, features = ["tooling", "native-file-dialog"] }
+
+[features]
+frame-profile = ["rune/frame-profile"]

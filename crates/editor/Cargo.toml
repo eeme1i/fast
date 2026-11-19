@@ -1,0 +1,10 @@
+[package]
+name = "fast-editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fast-core.workspace = true
+fast-theme.workspace = true
+rune.workspace = true
+typst-syntax = "0.15.1"

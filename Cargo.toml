@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+default-members = ["crates/app"]
+members = [
+  "crates/core",
+  "crates/theme",
+  "crates/lsp",
+  "crates/preview",
+  "crates/editor",
+  "crates/app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+fast-core = { path = "crates/core" }
+fast-editor = { path = "crates/editor" }
+fast-lsp = { path = "crates/lsp" }
+fast-preview = { path = "crates/preview" }
+fast-theme = { path = "crates/theme" }
+rune = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+
+# Cargo does not inherit [patch] from dependencies; keep this rev in sync with `rune` above.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+winit = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+parley_engine = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune.git", rev = "f54cbcfa84d995d339c243a579218f5062c940b5" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = true          # Strips symbols and debug info (biggest zero-cost win)
+lto = "thin"          # Cross-crate dead-code elimination (use `true` for max shrinkage)
+codegen-units = 1     # Better optimization & deduplication across the crate
+panic = "abort"       # Drops stack-unwinding tables
+# opt-level = "s"     # Optional: optimize for size instead of speed ("z" is even smaller)

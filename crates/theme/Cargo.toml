@@ -1,0 +1,8 @@
+[package]
+name = "fast-theme"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fast-core.workspace = true
+rune.workspace = true

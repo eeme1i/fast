@@ -1,0 +1,16 @@
+{
+  "events": [
+    {"t": 0.10, "type": "tap", "key": "settings-menu"},
+    {"t": 0.60, "type": "key", "name": "ArrowDown"},
+    {"t": 0.73, "type": "key", "name": "ArrowDown"},
+    {"t": 1.10, "type": "key", "name": "Enter"},
+    {"t": 1.60, "type": "tap", "key": "settings-menu"},
+    {"t": 2.15, "type": "tap", "key": "darcula"},
+    {"t": 2.68, "type": "tap", "key": "settings-menu"},
+    {"t": 2.90, "type": "key", "name": "Escape"},
+    {"t": 3.40, "type": "tap", "key": "settings-menu"},
+    {"t": 3.61, "type": "tap", "x": 24, "y": 170},
+    {"t": 4.10, "type": "move", "key": "open-file"},
+    {"t": 4.20, "type": "move", "x": 24, "y": 170}
+  ]
+}
