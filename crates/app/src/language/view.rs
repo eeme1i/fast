@@ -80,14 +80,7 @@ pub(crate) fn overlays(state: &State, palette: Palette) -> Vec<El> {
             Popup::Completion {
                 items, selected, ..
             } => popup::completion(palette, items, *selected),
-            Popup::Card { title, body, hover } => {
-                let anchor = if hover.is_some() {
-                    fast_editor::HOVER_ANCHOR
-                } else {
-                    "caret-0"
-                };
-                popup::card(palette, title, body, anchor)
-            }
+            Popup::Card { title, body, hover } => popup::card(palette, title, body, hover.as_ref()),
         });
     }
     if let Some(rename) = &state.language.rename {

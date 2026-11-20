@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use fast_editor::HoverTarget;
 use fast_lsp::{Query, position, types::*};
 use rune::{FileDialogOptions, Key, KeyEvent, TextEdit, Tx};
 
@@ -202,6 +203,37 @@ pub(crate) fn hover(state: &mut State, byte: usize, pointer: bool) {
         }),
         pointer.then_some(byte),
     );
+}
+
+pub(super) fn pointer_hover(state: &mut State, target: HoverTarget) -> bool {
+    let indices = match &target {
+        HoverTarget::Symbol(byte) => {
+            hover(state, *byte, true);
+            return false;
+        }
+        HoverTarget::Diagnostics { indices, .. } => indices,
+    };
+    let problems = state.editor.problems();
+    let mut matches = indices.iter().filter_map(|&i| problems.get(i));
+    let Some(first) = matches.next() else {
+        return false;
+    };
+    let (title, body) = if indices.len() == 1 {
+        (first.label(), first.message.clone())
+    } else {
+        let messages = std::iter::once(first)
+            .chain(matches)
+            .map(|problem| format!("{}\n{}", problem.label(), problem.message))
+            .collect::<Vec<_>>();
+        ("Diagnostics", messages.join("\n\n"))
+    };
+    state.language.popup = Some(Popup::Card {
+        title,
+        body,
+        hover: Some(target),
+    });
+    state.language.hover_dismiss = None;
+    true
 }
 
 pub(crate) fn refresh(state: &mut State) {

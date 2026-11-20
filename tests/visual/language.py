@@ -90,6 +90,21 @@ def main():
         tree = capture(binary, chapter, "problem-jump", open_problems + [tap(1.50, "language-result-0")], 1.75)
         assert any(node.get("key", "").startswith("selection-") for node in tree["elements"])
 
+        warning = directory / "warning.typ"
+        warning.write_text('#set text(font: "missing-font-for-hover-test")')
+        for severity, file, message, target in [
+            ("Error", chapter, "unknown variable", "line-3/source"),
+            ("Warning", warning, "unknown font family", "problem-marker"),
+        ]:
+            events = [dict(t=1.0, type="move", key=target)]
+            tree = capture(binary, file, f"diagnostic-hover-{severity.lower()}", events, 1.85)
+            assert by_key(tree, "card-title")[0]["text"] == severity
+            assert has_text(tree, message)
+            assert by_key(tree, "hover-anchor")
+            _, y, _, height = by_key(tree, "language-card")[0]["rect"]
+            _, body_y, _, body_height = by_key(tree, "card-content")[0]["rect"]
+            assert y <= body_y < body_y + body_height <= y + height
+
         config.write_text('[ui]\ntheme = "intellij-light-classic"\n')
         outline = [menu, tap(0.95, "language-outline")]
         tree = capture(binary, main, "outline-light", outline, 1.40)

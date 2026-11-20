@@ -14,7 +14,7 @@ use rune::{Live, PointerPress, Tx, Waker};
 
 use find::Find;
 pub use input::EditCommand;
-pub use language::{InlineHint, Problem, SemanticKind, SemanticMark};
+pub use language::{HoverTarget, InlineHint, Problem, SemanticKind, SemanticMark};
 use syntax::Syntax;
 pub use view::view;
 
@@ -28,7 +28,7 @@ pub trait Host: 'static {
     fn editor_key(&mut self, _: &rune::KeyEvent, _: &mut Tx) -> bool {
         false
     }
-    fn editor_hover(&mut self, _: Option<usize>, _: Option<PointerPress>, _: &mut Tx) {}
+    fn editor_hover(&mut self, _: Option<HoverTarget>, _: Option<PointerPress>, _: &mut Tx) {}
     fn editor_hover_anchor(&self) -> Option<usize> {
         None
     }

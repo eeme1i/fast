@@ -1,4 +1,4 @@
-use fast_editor::{InlineHint, Problem, SemanticKind, SemanticMark};
+use fast_editor::{HoverTarget, InlineHint, Problem, SemanticKind, SemanticMark};
 use fast_lsp::{Event, Kind, Reply, Status, range, types::*, workspace::text_edits};
 use rune::Tx;
 
@@ -140,7 +140,7 @@ pub(super) fn handle(state: &mut State, event: Event, tx: &mut Tx) -> bool {
 
 pub(super) fn show_diagnostics(state: &mut State, diagnostics: Vec<Diagnostic>) {
     let document = state.editor.document();
-    let marks = diagnostics
+    let marks: Vec<_> = diagnostics
         .iter()
         .filter_map(|diagnostic| {
             Some(Problem {
@@ -150,7 +150,26 @@ pub(super) fn show_diagnostics(state: &mut State, diagnostics: Vec<Diagnostic>) 
             })
         })
         .collect();
-    state.editor.set_problems(marks);
+    if state.editor.problems() != marks.as_slice() {
+        if matches!(
+            state.language.shown_hover(),
+            Some(HoverTarget::Diagnostics { .. })
+        ) {
+            state.language.popup = None;
+            state.language.hover_dismiss = None;
+            state.language.hover_card_bounds = None;
+            state.language.hover_card_inside = false;
+        }
+        if state
+            .language
+            .hover
+            .as_ref()
+            .is_some_and(|hover| matches!(hover.target, HoverTarget::Diagnostics { .. }))
+        {
+            state.language.hover = None;
+        }
+        state.editor.set_problems(marks);
+    }
     state.language.diagnostics = diagnostics;
 }
 
@@ -181,11 +200,9 @@ fn response(state: &mut State, waiting: Waiting, reply: Reply, tx: &mut Tx) -> b
         Reply::Hover(Some(hover)) => {
             if waiting.hover.is_some_and(|byte| {
                 !state.language.pointer_hover_allowed()
-                    || state
-                        .language
-                        .hover
-                        .as_ref()
-                        .is_none_or(|hover| hover.byte != byte || !hover.sent)
+                    || state.language.hover.as_ref().is_none_or(|hover| {
+                        hover.target != HoverTarget::Symbol(byte) || !hover.sent
+                    })
             }) || waiting.hover.is_none() && caret != waiting.caret
             {
                 return false;
@@ -396,7 +413,11 @@ fn nested(entries: &mut Vec<Entry>, symbols: Vec<DocumentSymbol>, uri: &Url, dep
 fn card(state: &mut State, title: &'static str, body: String, hover: Option<usize>) {
     if !body.trim().is_empty() {
         state.language.hover_dismiss = None;
-        state.language.popup = Some(Popup::Card { title, body, hover });
+        state.language.popup = Some(Popup::Card {
+            title,
+            body,
+            hover: hover.map(HoverTarget::Symbol),
+        });
     }
 }
 

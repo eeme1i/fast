@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use fast_core::config::{
     CompilerConfig, Config, ConfigError, ConfigFile, EditorConfig, ExportConfig, UiConfig,
 };
-use fast_editor::{Editor, Host, VIEWPORT};
+use fast_editor::{Editor, Host, HoverTarget, VIEWPORT};
 use rune::{App, AppSpec, Chrome, Key, KeyEvent, PointerPress, Tx, Waker};
 
 #[derive(Default)]
@@ -45,8 +45,13 @@ impl Host for State {
     fn editor_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         language::key(self, event, tx) || keymap::key(self, event, tx, true)
     }
-    fn editor_hover(&mut self, byte: Option<usize>, pointer: Option<PointerPress>, tx: &mut Tx) {
-        language::hover(self, byte, pointer, tx);
+    fn editor_hover(
+        &mut self,
+        target: Option<HoverTarget>,
+        pointer: Option<PointerPress>,
+        tx: &mut Tx,
+    ) {
+        language::hover(self, target, pointer, tx);
     }
     fn editor_hover_anchor(&self) -> Option<usize> {
         self.language.hover_anchor()

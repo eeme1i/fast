@@ -12,6 +12,7 @@ use std::{
 };
 
 use fast_core::config::LspConfig;
+use fast_editor::HoverTarget;
 use fast_lsp::{Client, CompileStatus, Kind, Options, Query, Status, position, types::*};
 use rune::{PointerPress, TextEdit, Tx};
 
@@ -102,12 +103,12 @@ pub(crate) enum Popup {
     Card {
         title: &'static str,
         body: String,
-        hover: Option<usize>,
+        hover: Option<HoverTarget>,
     },
 }
 
 struct HoverRequest {
-    byte: usize,
+    target: HoverTarget,
     deadline: Option<f64>,
     sent: bool,
 }
@@ -479,8 +480,8 @@ pub(crate) fn poll(state: &mut State, now: f64, tx: &mut Tx) -> bool {
         if let Some(deadline) = hover.deadline {
             if now >= deadline {
                 hover.sent = true;
-                let byte = hover.byte;
-                actions::hover(state, byte, true);
+                let target = hover.target.clone();
+                changed |= actions::pointer_hover(state, target);
             }
         } else {
             hover.deadline = Some(now + HOVER.as_secs_f64());
@@ -509,7 +510,7 @@ pub(crate) fn poll(state: &mut State, now: f64, tx: &mut Tx) -> bool {
 
 pub(crate) fn hover(
     state: &mut State,
-    byte: Option<usize>,
+    target: Option<HoverTarget>,
     pointer: Option<PointerPress>,
     tx: &mut Tx,
 ) {
@@ -530,24 +531,24 @@ pub(crate) fn hover(
     {
         return;
     }
-    if let Some(byte) = byte
-        && matches!(language.popup, Some(Popup::Card { hover: Some(shown), .. }) if byte == shown)
+    if let Some(shown) = language.shown_hover()
+        && Some(shown) == target.as_ref()
     {
         language.hover = Some(HoverRequest {
-            byte,
+            target: shown.clone(),
             deadline: None,
             sent: true,
         });
         language.hover_dismiss = None;
         return;
     }
-    if language.hover.as_ref().map(|hover| hover.byte) != byte {
-        language.hover = byte.map(|byte| HoverRequest {
-            byte,
+    if language.hover.as_ref().map(|hover| &hover.target) != target.as_ref() {
+        language.hover = target.map(|target| HoverRequest {
+            target,
             deadline: None,
             sent: false,
         });
-        if byte.is_some() {
+        if language.hover.is_some() {
             tx.wake_after(Duration::ZERO);
         }
     }
@@ -560,8 +561,8 @@ fn keep_hover(state: &mut State, hovered: bool, tx: &mut Tx) {
     if hovered {
         language.hover = None;
         language.hover_dismiss = None;
-    } else if let Some(shown) = language.hover.as_ref().map(|hover| hover.byte)
-        && matches!(language.popup, Some(Popup::Card { hover: Some(byte), .. }) if shown == byte)
+    } else if let Some(hover) = &language.hover
+        && language.shown_hover() == Some(&hover.target)
     {
         language.hover_dismiss = None;
     } else {
@@ -572,8 +573,12 @@ fn keep_hover(state: &mut State, hovered: bool, tx: &mut Tx) {
 
 impl Language {
     pub fn hover_anchor(&self) -> Option<usize> {
-        match self.popup {
-            Some(Popup::Card { hover, .. }) => hover,
+        self.shown_hover().map(HoverTarget::anchor)
+    }
+
+    fn shown_hover(&self) -> Option<&HoverTarget> {
+        match &self.popup {
+            Some(Popup::Card { hover, .. }) => hover.as_ref(),
             _ => None,
         }
     }
@@ -586,7 +591,8 @@ impl Language {
     }
 
     fn has_hover_card(&self) -> bool {
-        matches!(self.popup, Some(Popup::Card { title: "Hover", .. }))
+        self.shown_hover().is_some()
+            || matches!(self.popup, Some(Popup::Card { title: "Hover", .. }))
     }
 
     fn schedule_hover_dismiss(&mut self, tx: &mut Tx) {

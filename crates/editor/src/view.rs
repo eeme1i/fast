@@ -6,7 +6,7 @@ use rune::text::{TextSystem, parley};
 use rune::tok::{Family, TextStyle};
 use rune::{Align, Cursor, El, GrowthSpec, Shape, canvas, col, el, rich, row, text};
 
-use crate::{BLINK, Host, SemanticKind, VIEWPORT, find, input, selection};
+use crate::{BLINK, Host, HoverTarget, SemanticKind, VIEWPORT, find, input, selection};
 
 const CODE_PADDING: f32 = 10.0;
 
@@ -132,7 +132,11 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
         .language
         .problems
         .iter()
-        .filter(|problem| problem.range.start <= range.end && problem.range.end >= range.start)
+        .enumerate()
+        .filter(|(_, problem)| {
+            problem.range.start <= range.end
+                && (problem.range.end > range.start || problem.range.start == range.start)
+        })
         .collect();
     let mut line = row()
         .key(line_key(index))
@@ -168,31 +172,8 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
     if active {
         line = line.fill(style.code.active_line);
     }
-    if editor.language.track {
-        line = line
-            .on_pointer_move_local(move |state: &mut S, pointer, tx| {
-                let editor = state.editor();
-                if !editor.language.track || editor.drag_origin.is_some() {
-                    tx.live_only();
-                    return;
-                }
-                let byte = hit(state, index, style, pointer.x)
-                    .1
-                    .and_then(|glyph| editor.syntax.hover_byte(glyph));
-                state.editor_mut().hover_line = Some(index);
-                state.editor_hover(byte, Some(pointer.window()), tx);
-            })
-            .on_hover_change(move |state: &mut S, hovered, tx| {
-                if !hovered && state.editor().hover_line == Some(index) {
-                    state.editor_mut().hover_line = None;
-                    state.editor_hover(None, None, tx);
-                } else {
-                    tx.live_only();
-                }
-            });
-    }
-    if let Some(problem) = diagnostics.first() {
-        let color = if diagnostics.iter().any(|problem| problem.error) {
+    if !diagnostics.is_empty() {
+        let color = if diagnostics.iter().any(|(_, problem)| problem.error) {
             style.palette.error_text
         } else {
             style.code.keyword
@@ -202,7 +183,7 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
                 .absolute(2.0, 7.0)
                 .size(3.0, 8.0)
                 .fill(color)
-                .help(&problem.message),
+                .a11y_hidden(),
         );
     }
     let collapsed = editor
@@ -334,7 +315,7 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
     );
     if let Some(byte) = state
         .editor_hover_anchor()
-        .filter(|byte| range.contains(byte))
+        .filter(|byte| (range.start..=range.end).contains(byte))
     {
         let x = text_x(&source, style, byte - range.start);
         line = line.child(
@@ -345,7 +326,8 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
                 .a11y_hidden(),
         );
     }
-    for (i, problem) in diagnostics.into_iter().enumerate() {
+    let mut diagnostic_spans = Vec::with_capacity(diagnostics.len());
+    for (i, (problem_index, problem)) in diagnostics.into_iter().enumerate() {
         let start = problem.range.start.clamp(range.start, range.end) - range.start;
         let end = problem.range.end.clamp(range.start, range.end) - range.start;
         let (left, right) = with_layout(&source, style, |layout| {
@@ -362,6 +344,8 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
             (x(start), x(end))
         });
         let width = (right - left).abs().clamp(3.0, 1400.0);
+        let x = style.code_start() + left.min(right);
+        diagnostic_spans.push((x..x + width, range.start + start, problem_index));
         let points = (0..=(width / 2.0).ceil() as usize)
             .map(|n| [(2.0 * n as f32).min(width), (n % 2) as f32 * 2.0])
             .collect::<Vec<_>>();
@@ -373,13 +357,48 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
         line = line.child(
             canvas(Shape::new().stroke(points, style.hairline(), color))
                 .key(format!("diagnostic-{i}"))
-                .absolute(
-                    style.code_start() + left.min(right),
-                    style.line_height - 3.0,
-                )
+                .absolute(x, style.line_height - 3.0)
                 .size(width, 2.0)
-                .help(&problem.message),
+                .label(&problem.message),
         );
+    }
+    if editor.language.track {
+        line = line
+            .on_pointer_move_local(move |state: &mut S, pointer, tx| {
+                let editor = state.editor();
+                if !editor.language.track || editor.drag_origin.is_some() {
+                    tx.live_only();
+                    return;
+                }
+                let gutter_marker = (0.0..8.0).contains(&pointer.x);
+                let mut matches = diagnostic_spans
+                    .iter()
+                    .filter(|(span, _, _)| gutter_marker || span.contains(&pointer.x));
+                let target = if let Some((_, anchor, first)) = matches.next() {
+                    let indices = std::iter::once(*first)
+                        .chain(matches.map(|(_, _, i)| *i))
+                        .collect();
+                    Some(HoverTarget::Diagnostics {
+                        anchor: *anchor,
+                        indices,
+                    })
+                } else {
+                    hit(state, index, style, pointer.x)
+                        .1
+                        .and_then(|glyph| editor.syntax.hover_byte(glyph))
+                        .map(HoverTarget::Symbol)
+                };
+                state.editor_mut().hover_line = Some(index);
+                state.editor_hover(target, Some(pointer.window()), tx);
+            })
+            .on_hover_change(move |state: &mut S, hovered, tx| {
+                if !hovered && state.editor().hover_line == Some(index) {
+                    state.editor_mut().hover_line = None;
+                    state.editor_hover(None, None, tx);
+                } else {
+                    tx.live_only();
+                }
+            });
     }
     if collapsed {
         line = line.child(

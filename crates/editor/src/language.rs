@@ -5,11 +5,32 @@ use rune::Tx;
 
 use crate::{Editor, VIEWPORT, view};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
+pub enum HoverTarget {
+    Symbol(usize),
+    Diagnostics { anchor: usize, indices: Vec<usize> },
+}
+
+impl HoverTarget {
+    pub fn anchor(&self) -> usize {
+        match self {
+            Self::Symbol(byte) => *byte,
+            Self::Diagnostics { anchor, .. } => *anchor,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct Problem {
     pub range: Range<usize>,
     pub error: bool,
     pub message: String,
+}
+
+impl Problem {
+    pub fn label(&self) -> &'static str {
+        if self.error { "Error" } else { "Warning" }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -56,6 +77,10 @@ impl Editor {
 
     pub fn visible_lines(&self) -> Range<usize> {
         self.visible.clone()
+    }
+
+    pub fn problems(&self) -> &[Problem] {
+        &self.language.problems
     }
 
     pub fn set_problems(&mut self, problems: Vec<Problem>) {

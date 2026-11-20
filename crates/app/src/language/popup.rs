@@ -1,3 +1,4 @@
+use fast_editor::HoverTarget;
 use fast_lsp::types::*;
 use fast_theme::tok::Palette;
 use rune::{Align, El, ScrollSpec, Side, col, row, text};
@@ -115,64 +116,89 @@ fn kind_label(kind: Option<CompletionItemKind>) -> &'static str {
     }
 }
 
-pub(super) fn card(palette: Palette, title: &str, body: &str, anchor: &str) -> El {
+pub(super) fn card(palette: Palette, title: &str, body: &str, hover: Option<&HoverTarget>) -> El {
+    let anchor = if hover.is_some() {
+        fast_editor::HOVER_ANCHOR
+    } else {
+        "caret-0"
+    };
+    let diagnostic = matches!(hover, Some(HoverTarget::Diagnostics { .. }));
     let mut parts = col().key("card-content").gap(5.0).w_full().min_w(0.0);
-    for (index, part) in body.split("```").enumerate().take(20) {
-        let code = index % 2 != 0;
-        let part = if code {
-            part.split_once('\n').map_or(part, |(_, rest)| rest)
-        } else {
-            part
-        };
-        if part.trim().is_empty() {
-            continue;
-        }
-        let font = if code {
-            palette.ui_text(12.0).family(rune::tok::Family::SystemMono)
-        } else {
-            palette.ui_text(12.0)
-        };
-        let text: String = part.trim().chars().take(6000).collect();
+    if diagnostic {
         parts = parts.child(
-            rune::text(text)
-                .font(font)
+            text(body)
+                .font(palette.ui_text(12.0))
                 .w_full()
                 .wrap_anywhere()
                 .color(palette.text),
         );
+    } else {
+        for (index, part) in body.split("```").enumerate().take(20) {
+            let code = index % 2 != 0;
+            let part = if code {
+                part.split_once('\n').map_or(part, |(_, rest)| rest)
+            } else {
+                part
+            };
+            if part.trim().is_empty() {
+                continue;
+            }
+            let font = if code {
+                palette.ui_text(12.0).family(rune::tok::Family::SystemMono)
+            } else {
+                palette.ui_text(12.0)
+            };
+            let text: String = part.trim().chars().take(6000).collect();
+            parts = parts.child(
+                rune::text(text)
+                    .font(font)
+                    .w_full()
+                    .wrap_anywhere()
+                    .color(palette.text),
+            );
+        }
     }
     let mut card = col()
         .key("language-card")
         .anchored_fit(anchor, Side::Bottom, Align::Start, 4.0)
         .w(385.0)
-        .h(if title == "Signature" { 96.0 } else { 146.0 })
         .min_h(0.0)
         .padding(8.0)
         .gap(5.0)
         .fill(palette.chrome)
         .border(1.0, palette.divider);
-    if title == "Hover" {
+    if !diagnostic {
+        card = card.h(if title == "Signature" { 96.0 } else { 146.0 });
+    }
+    if title == "Hover" || diagnostic {
         card = card.on_hover_change(super::keep_hover).on_drawn_layout_tx(
             |state: &mut State, bounds, tx| {
                 state.language.hover_card_bounds = Some(bounds);
                 tx.live_only();
             },
         );
-    } else {
+    }
+    if title != "Hover" {
         card = card.child(
             text(title)
                 .key("card-title")
                 .font(palette.control_text(12.0))
-                .color(palette.accent),
+                .color(if title == "Error" {
+                    palette.error_text
+                } else {
+                    palette.accent
+                }),
         );
     }
-    card.child(
-        col()
-            .grow(1.0)
-            .min_h(0.0)
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(parts),
-    )
+    let viewport = col()
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(parts);
+    card.child(if diagnostic {
+        viewport.max_h(120.0)
+    } else {
+        viewport.grow(1.0)
+    })
 }
