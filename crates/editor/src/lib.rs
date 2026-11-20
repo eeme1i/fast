@@ -181,19 +181,27 @@ impl Editor {
 
     pub fn ime(&mut self, event: &rune::Ime, tx: &mut Tx) {
         match event {
-            rune::Ime::Preedit(text, ..) => self.preedit.clone_from(text),
+            rune::Ime::Preedit(text, ..) => {
+                self.preedit.clone_from(text);
+                if !text.is_empty() {
+                    self.reveal(tx);
+                }
+            }
             rune::Ime::Commit(text) => {
                 self.preedit.clear();
                 self.insert_plain(text, tx);
             }
-            rune::Ime::Select(range) => self.document.select(fast_core::document::Selection {
-                anchor: range.start,
-                head: range.end,
-            }),
+            rune::Ime::Select(range) => {
+                self.document.select(Selection {
+                    anchor: range.start,
+                    head: range.end,
+                });
+                self.reveal(tx);
+            }
+            // Scrolling the virtual caret row offscreen can disable the input method.
             rune::Ime::Disabled => self.preedit.clear(),
-            _ => {}
+            rune::Ime::Enabled => {}
         }
-        self.reveal(tx);
     }
 
     pub fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {

@@ -111,6 +111,19 @@ def auto_indent(binary, directory):
     assert file.read_bytes() == b"heading\r\n \t  payload\r\n \t  \r\n \t  next"
 
 
+def scroll_past_caret(binary, directory):
+    file = directory / "scroll.typ"
+    file.write_text("\n".join(f"Row {i}" for i in range(300)))
+    events = [dict(t=0.2, type="wheel", x=300, y=200, dx=0, dy=-2200, precise=True),
+              dict(t=0.4, type="ime", preedit="")]
+    scrolled = run(binary, file, "offscreen-caret", events, at=0.8, scale=1)
+    assert not any(e.get("key") == "line-1" for e in scrolled["elements"])
+
+    events.append(typed(0.9, "X"))
+    edited = run(binary, file, "edit-offscreen-caret", events, at=1.2, scale=1)
+    assert any(e.get("text") == "XRow 0" for e in edited["elements"])
+
+
 def workflow(binary, file):
     (file.parent / "config.toml").write_text("[lsp]\nenabled = false\n")
     initial = run(binary, file, "darcula-editor", at=0.10, scale=1)
@@ -207,6 +220,7 @@ def main():
         workflow(binary, file)
         word_selection(binary, file.parent)
         auto_indent(binary, file.parent)
+        scroll_past_caret(binary, file.parent)
         if not args.skip_latency:
             latency(binary, file)
 
