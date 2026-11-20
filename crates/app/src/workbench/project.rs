@@ -12,8 +12,9 @@ use rune::{El, FileDialogOptions, GrowthSpec, Latest, Tx, Waker, col, text};
 
 use super::{dock::Tool, item};
 use crate::{State, files};
+pub(crate) use search::open_search;
+pub(super) use search::search;
 use search::{Search, rerun_search};
-pub(super) use search::{open_search, search};
 
 #[derive(Default)]
 pub(crate) struct Project {
@@ -51,7 +52,7 @@ impl Project {
         self.search.setup(waker);
     }
 
-    fn use_root(&mut self, root: PathBuf) {
+    pub(crate) fn use_root(&mut self, root: PathBuf) {
         self.expanded.clear();
         self.visible.clear();
         self.index = None;
@@ -157,7 +158,7 @@ fn entry_key(path: &Path) -> String {
     format!("project-entry-{:016x}", hasher.finish())
 }
 
-pub(super) fn choose_root(state: &mut State, tx: &mut Tx) {
+pub(crate) fn choose_root(state: &mut State, tx: &mut Tx) {
     tx.open_folder(
         FileDialogOptions {
             title: "Open project folder".into(),

@@ -3,16 +3,17 @@
 mod find;
 mod input;
 mod language;
+mod selection;
 mod syntax;
 mod view;
 
 use std::{ops::Range, time::Duration};
 
 use fast_core::document::{Document, Edit, Selection};
-use rune::{PointerPress, Tx, Waker};
+use rune::{Live, PointerPress, Tx, Waker};
 
 use find::Find;
-pub use input::paste;
+pub use input::EditCommand;
 pub use language::{InlineHint, Problem, SemanticKind, SemanticMark};
 use syntax::Syntax;
 pub use view::view;
@@ -41,7 +42,8 @@ pub struct Editor {
     blink_on: bool,
     next_blink: Option<f64>,
     preferred_column: Option<usize>,
-    drag_origin: Option<Selection>,
+    drag_origin: Option<selection::Gesture>,
+    scroll: Live<[f32; 2]>,
     hover_line: Option<usize>,
     preedit: String,
     visible: Range<usize>,
@@ -67,6 +69,7 @@ impl Editor {
             next_blink: None,
             preferred_column: None,
             drag_origin: None,
+            scroll: Live::new([0.0; 2]),
             hover_line: None,
             preedit: String::new(),
             visible: 0..0,
@@ -80,15 +83,44 @@ impl Editor {
     }
 
     pub fn reveal_tab(&mut self, tx: &mut Tx) {
-        let line = self.document.line_at(self.document.selection().head);
         self.preedit.clear();
         self.drag_origin = None;
         self.hover_line = None;
         self.mark_activity(tx);
-        tx.scroll_to_instant(VIEWPORT, 0.0, 0.0);
-        if line != 0 {
-            tx.scroll_center_in_instant(VIEWPORT, view::line_key(line));
-        }
+        let [x, y] = self.scroll();
+        tx.scroll_to_instant(VIEWPORT, x, y);
+    }
+
+    pub fn center_caret(&self, tx: &mut Tx) {
+        let line = self.document.line_at(self.document.selection().head);
+        tx.scroll_center_in_instant(VIEWPORT, view::line_key(line));
+    }
+
+    pub fn scroll(&self) -> [f32; 2] {
+        self.scroll.get()
+    }
+
+    pub fn restore_view(&mut self, selections: Vec<Selection>, scroll: [f32; 2]) {
+        self.document.set_selections(selections);
+        self.scroll.set(scroll.map(|offset| {
+            if offset.is_finite() {
+                offset.max(0.0)
+            } else {
+                0.0
+            }
+        }));
+    }
+
+    pub fn reload(&mut self, disk: &Document, tx: &mut Tx) {
+        let selections = self.document.selections().to_vec();
+        let scroll = self.scroll();
+        let edits = self.document.replace_ranges(vec![Edit {
+            range: 0..self.document.len(),
+            text: disk.snapshot().to_string(),
+        }]);
+        self.restore_view(selections, scroll);
+        self.changed(edits, tx);
+        self.reveal_tab(tx);
     }
 
     pub fn setup(&self, waker: Waker) {

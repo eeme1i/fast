@@ -19,8 +19,8 @@ pub(super) struct Store {
     changed: bool,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Preferences {
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Preferences {
     ratios: [f32; 3],
     weights: [f32; 6],
     positions: BTreeMap<Tool, Dock>,
@@ -46,19 +46,16 @@ impl Store {
             });
     }
 
+    pub fn supersede(&mut self) {
+        self.changed = true;
+    }
+
     pub fn save(&mut self, layout: &Layout) {
         let Some(path) = self.path.clone() else {
             return;
         };
         self.changed = true;
-        let prefs = Preferences {
-            ratios: layout.ratios,
-            weights: layout.weights,
-            positions: Tool::ALL
-                .into_iter()
-                .filter_map(|tool| Some((tool, layout.placements[tool as usize]?)))
-                .collect(),
-        };
+        let prefs = Preferences::capture(layout);
         self.write.request((path, prefs), |(path, prefs)| {
             let text = toml::to_string(&prefs).map_err(|error| error.to_string())?;
             file::save(&path, &Document::new(&text).snapshot())
@@ -71,19 +68,7 @@ impl Store {
         if let Some(result) = self.read.take() {
             match result {
                 Ok(Some(prefs)) if !self.changed => {
-                    for (index, ratio) in prefs.ratios.into_iter().enumerate() {
-                        if ratio.is_finite() {
-                            layout.ratios[index] = ratio.clamp(0.15, 0.68);
-                        }
-                    }
-                    for (index, weight) in prefs.weights.into_iter().enumerate() {
-                        if weight.is_finite() {
-                            layout.weights[index] = weight.clamp(0.2, 5.0);
-                        }
-                    }
-                    for (tool, dock) in prefs.positions {
-                        layout.placements[tool as usize] = Some(dock);
-                    }
+                    prefs.restore(layout);
                     return true;
                 }
                 Err(reason) => {
@@ -98,5 +83,35 @@ impl Store {
             return true;
         }
         false
+    }
+}
+
+impl Preferences {
+    pub fn capture(layout: &Layout) -> Self {
+        Self {
+            ratios: layout.ratios,
+            weights: layout.weights,
+            positions: Tool::ALL
+                .into_iter()
+                .filter_map(|tool| Some((tool, layout.placements[tool as usize]?)))
+                .collect(),
+        }
+    }
+
+    pub fn restore(self, layout: &mut Layout) {
+        layout.placements.fill(None);
+        for (index, ratio) in self.ratios.into_iter().enumerate() {
+            if ratio.is_finite() {
+                layout.ratios[index] = ratio.clamp(0.15, 0.68);
+            }
+        }
+        for (index, weight) in self.weights.into_iter().enumerate() {
+            if weight.is_finite() {
+                layout.weights[index] = weight.clamp(0.2, 5.0);
+            }
+        }
+        for (tool, dock) in self.positions {
+            layout.placements[tool as usize] = Some(dock);
+        }
     }
 }

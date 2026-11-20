@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use fast_core::document::Document;
+use fast_core::{document::Document, file};
 use fast_lsp::{
     Query,
     types::{Command, ExecuteCommandParams, FileChangeType, FileEvent, Url, WorkspaceEdit},
@@ -120,9 +120,8 @@ fn confirm(state: &mut State, tx: &mut Tx) {
     let tabs = state
         .files
         .other_buffers()
-        .map(|(path, _)| path)
-        .filter(|path| paths.contains(path))
-        .map(std::path::Path::to_owned)
+        .filter(|(path, _)| paths.contains(path))
+        .map(|(path, document)| (path.to_owned(), document.snapshot()))
         .collect::<Vec<_>>();
     state.language.workspace.job.request(
         (
@@ -133,10 +132,20 @@ fn confirm(state: &mut State, tx: &mut Tx) {
             tabs,
         ),
         |(plan, root, path, doc, tabs)| {
+            for (path, expected) in &tabs {
+                let disk = file::read_text(path)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                if &disk != expected {
+                    return Err(format!(
+                        "{} changed on disk. Review it before applying workspace edits.",
+                        path.display()
+                    ));
+                }
+            }
             let applied = plan.apply(&root, &path, &doc)?;
             let tabs = tabs
                 .into_iter()
-                .map(|previous| {
+                .map(|(previous, _)| {
                     let path = applied
                         .moved
                         .as_ref()
@@ -170,9 +179,7 @@ pub(crate) fn poll(state: &mut State, tx: &mut Tx) -> bool {
             if !applied.edits.is_empty() {
                 state.editor.apply_language_edits(applied.edits, tx);
             }
-            state
-                .files
-                .workspace_saved(applied.path, state.editor.document().revision());
+            state.files.workspace_saved(applied.path, &state.editor);
             let mut refreshed = Vec::new();
             for tab in tabs {
                 match tab {

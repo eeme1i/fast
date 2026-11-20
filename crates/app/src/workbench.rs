@@ -11,10 +11,11 @@ use std::{
 
 use fast_core::config::{PreviewDock, TabPlacement};
 use fast_theme::tok::{Palette, row_height};
-use rune::{El, Key, KeyEvent, ScrollSpec, TextEdit, Tx, Waker, col, row, text, text_input};
+use rune::{El, ScrollSpec, TextEdit, Tx, Waker, col, row, text, text_input};
 
 use crate::{State, files, preview};
-pub(crate) use dock::Tool;
+pub(crate) use dock::{Tool, toggle};
+use serde::{Deserialize, Serialize};
 
 #[derive(Default)]
 pub(crate) struct Workbench {
@@ -29,7 +30,37 @@ pub(crate) struct Workbench {
     last_preview: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WorkbenchSession {
+    geometry: layout_store::Preferences,
+    tools: Vec<Tool>,
+    preview_visible: bool,
+    preview_tab: bool,
+}
+
 impl Workbench {
+    pub fn session(&self, preview: &preview::Preview) -> WorkbenchSession {
+        WorkbenchSession {
+            geometry: layout_store::Preferences::capture(&self.layout),
+            tools: Tool::ALL
+                .into_iter()
+                .filter(|tool| self.is_open(*tool))
+                .collect(),
+            preview_visible: preview.visible,
+            preview_tab: self.preview_tab,
+        }
+    }
+
+    pub fn restore_session(&mut self, session: WorkbenchSession, preview: &mut preview::Preview) {
+        self.layout_store.supersede();
+        session.geometry.restore(&mut self.layout);
+        for tool in Tool::ALL {
+            self.layout.open(tool, session.tools.contains(&tool));
+        }
+        preview.visible = session.preview_visible;
+        self.preview_tab = session.preview_tab;
+    }
+
     pub(crate) fn width(&self) -> f32 {
         self.layout.width()
     }
@@ -351,42 +382,12 @@ pub(crate) fn quick_open(state: &mut State, tx: &mut Tx) {
     picker::show(state, picker::Mode::Files, tx);
 }
 
-pub(crate) fn key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
-    if state.files.confirm_close.is_some()
-        || state.language.workspace.showing()
-        || state.settings_menu
-        || state.workbench.picker.mode.is_some()
-    {
-        return false;
-    }
-    let base = tx.key_base().or_else(|| match &event.key {
-        Key::Text(value) if value.chars().count() == 1 => value.chars().next(),
-        Key::Command(ch) => Some(*ch),
-        _ => None,
-    });
-    if event.mods.alt && !event.mods.ctrl && !event.mods.cmd {
-        let tool = match base.map(|ch| ch.to_ascii_lowercase()) {
-            Some('1') => Tool::Project,
-            Some('2') => Tool::Outline,
-            Some('6') => Tool::Problems,
-            Some('p') => Tool::Preview,
-            _ => return false,
-        };
-        dock::toggle(state, tool, tx);
-        return true;
-    }
-    if !(event.mods.cmd || event.mods.ctrl || matches!(event.key, Key::Command(_))) {
-        return false;
-    }
-    match (base.map(|ch| ch.to_ascii_lowercase()), event.mods.shift) {
-        (Some('p'), true) => commands(state, tx),
-        (Some('p'), false) => quick_open(state, tx),
-        (Some('f'), true) => project::open_search(state, tx),
-        (Some('n'), false) => files::create(state, tx),
-        (Some('w'), false) => files::close(state, state.files.active, tx),
-        _ => return false,
-    }
-    true
+pub(crate) fn shortcuts_available(state: &State) -> bool {
+    state.files.confirm_close.is_none()
+        && !state.files.comparing()
+        && !state.language.workspace.showing()
+        && !state.settings_menu
+        && state.workbench.picker.mode.is_none()
 }
 
 fn item(

@@ -110,3 +110,37 @@ fn opens_and_saves_twenty_thousand_lines() -> std::io::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn adjacent_occurrences_are_separate_edits() {
+    let mut doc = Document::new("xyxy");
+    let selections = vec![
+        Selection { anchor: 0, head: 2 },
+        Selection { anchor: 2, head: 4 },
+    ];
+    doc.set_selections(selections.clone());
+    doc.insert("•", false);
+    assert_eq!(doc.snapshot().to_string(), "••");
+    doc.undo();
+    assert_eq!(doc.snapshot().to_string(), "xyxy");
+    assert_eq!(doc.selections(), selections);
+}
+
+#[test]
+fn guarded_save_requires_the_expected_disk_version() -> std::io::Result<()> {
+    let folder = tempfile::tempdir()?;
+    let path = folder.path().join("main.typ");
+    let old = Document::new("old").snapshot();
+    let edited = Document::new("my changes").snapshot();
+    let external = Document::new("elsewhere").snapshot();
+    file::save(&path, &old)?;
+    file::save(&path, &external)?;
+    assert!(file::save_if_unchanged(&path, &edited, Some(&old)).is_err());
+    assert!(file::save_if_unchanged(&path, &edited, None).is_err());
+    assert_eq!(file::read_text(&path)?, external);
+    file::save_if_unchanged(&path, &edited, Some(&external))?;
+    assert_eq!(file::read_text(&path)?, edited);
+    std::fs::remove_file(&path)?;
+    file::save_if_unchanged(&path, &edited, None)?;
+    Ok(())
+}

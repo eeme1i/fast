@@ -93,7 +93,7 @@ pub(super) fn poll(state: &mut State) -> bool {
     changed
 }
 
-pub(in crate::workbench) fn open_search(state: &mut State, tx: &mut Tx) {
+pub(crate) fn open_search(state: &mut State, tx: &mut Tx) {
     state.workbench.open(Tool::Search);
     if !state.workbench.project.search.field.text.is_empty() {
         rerun_search(state);

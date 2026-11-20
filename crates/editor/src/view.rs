@@ -1,15 +1,12 @@
 use std::cell::RefCell;
 
 use fast_core::config::{EditorConfig, EditorFont};
-use fast_core::document::Selection;
 use fast_theme::tok::{self, CodePalette, Palette};
 use rune::text::{TextSystem, parley};
 use rune::tok::{Family, TextStyle};
-use rune::{
-    Align, Cursor, Drag, El, GrowthSpec, Phase, Shape, Tx, canvas, col, el, rich, row, text,
-};
+use rune::{Align, Cursor, El, GrowthSpec, Shape, canvas, col, el, rich, row, text};
 
-use crate::{BLINK, Host, SemanticKind, VIEWPORT, find, input};
+use crate::{BLINK, Host, SemanticKind, VIEWPORT, find, input, selection};
 
 const CODE_PADDING: f32 = 10.0;
 
@@ -18,13 +15,13 @@ thread_local! {
 }
 
 #[derive(Clone, Copy)]
-struct Style {
+pub(super) struct Style {
     palette: Palette,
     code: CodePalette,
     scale: f32,
     gutter: f32,
     text: TextStyle,
-    line_height: f32,
+    pub(super) line_height: f32,
 }
 
 impl Style {
@@ -78,6 +75,12 @@ pub fn view<S: Host>(
             .min_w(0.0)
             .scroll_xy()
             .scroll_margin(0.0)
+            .on_scroll_offset({
+                let scroll = editor.scroll.clone();
+                move |position| {
+                    scroll.set(position.offset);
+                }
+            })
             .focusable(true)
             .no_focus_ring()
             .on_key(input::key::<S>)
@@ -137,7 +140,9 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
         .w_full()
         .center_y()
         .cursor(Cursor::Text)
-        .on_drag(move |state: &mut S, drag, tx| pointer(state, display_index, style, drag, tx))
+        .on_drag(move |state: &mut S, drag, tx| {
+            selection::pointer(state, display_index, style, drag, tx)
+        })
         .child(
             row()
                 .key("gutter")
@@ -448,80 +453,7 @@ fn line<S: Host>(state: &S, display_index: usize, index: usize, style: Style) ->
     line
 }
 
-fn pointer<S: Host>(state: &mut S, start_line: usize, style: Style, drag: &Drag, tx: &mut Tx) {
-    if matches!(drag.phase, Phase::Up) {
-        state.editor_mut().drag_origin = None;
-        tx.live_only();
-        return;
-    }
-    let on_down = matches!(drag.phase, Phase::Down);
-    if on_down {
-        state.editor_hover(None, None, tx);
-    }
-    let display_line =
-        start_line.saturating_add_signed((drag.y / style.line_height).floor() as isize);
-    let line = state.editor().displayed_line(display_line);
-    let (byte, glyph) = hit(state, line, style, drag.x);
-    let editor = state.editor_mut();
-    let document = &mut editor.document;
-    let unit = match drag.clicks {
-        2 => glyph.map_or_else(
-            || Selection::caret(byte),
-            |at| input::select_word(document, at),
-        ),
-        3.. => {
-            let range = document.line_range(line);
-            Selection {
-                anchor: range.start,
-                head: range.end,
-            }
-        }
-        _ => Selection::caret(byte),
-    };
-    let selection = if on_down {
-        let selection = if tx.mods().shift {
-            Selection {
-                anchor: document.selection().anchor,
-                head: byte,
-            }
-        } else {
-            unit
-        };
-        editor.drag_origin = Some(if tx.mods().shift {
-            Selection::caret(selection.anchor)
-        } else {
-            unit
-        });
-        selection
-    } else if let Some(origin) = editor.drag_origin {
-        let unit = if origin.is_empty() {
-            Selection::caret(byte)
-        } else {
-            unit
-        };
-        if unit.head <= origin.anchor {
-            Selection {
-                anchor: origin.head,
-                head: unit.anchor,
-            }
-        } else {
-            Selection {
-                anchor: origin.anchor,
-                head: origin.head.max(unit.head),
-            }
-        }
-    } else {
-        tx.live_only();
-        return;
-    };
-    document.select(selection);
-    editor.preferred_column = None;
-    editor.focused = true;
-    tx.focus(VIEWPORT, false);
-    editor.reveal(tx);
-}
-
-fn hit<S: Host>(state: &S, line: usize, style: Style, x: f32) -> (usize, Option<usize>) {
+pub(super) fn hit<S: Host>(state: &S, line: usize, style: Style, x: f32) -> (usize, Option<usize>) {
     let document = state.editor().document();
     let range = document.line_range(line);
     let source = document.slice(range.clone());

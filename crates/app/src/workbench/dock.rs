@@ -67,15 +67,16 @@ impl Tool {
         }
     }
 
-    fn help(self) -> &'static str {
-        match self {
-            Self::Project => "Project files (Alt+1)",
-            Self::Outline => "Document outline (Alt+2)",
-            Self::Problems => "Problems (Alt+6)",
-            Self::Search => "Find in Files (Ctrl+Shift+F)",
-            Self::Compiler => "Compiler output",
-            Self::Preview => "Preview (Alt+P)",
-        }
+    fn help(self, state: &State) -> String {
+        let (id, label) = match self {
+            Self::Project => ("toggle-project", "Project files"),
+            Self::Outline => ("toggle-outline", "Document outline"),
+            Self::Problems => ("toggle-problems", "Problems"),
+            Self::Search => ("find-in-files", "Find in Files"),
+            Self::Compiler => ("toggle-compiler", "Compiler output"),
+            Self::Preview => ("toggle-preview", "Preview"),
+        };
+        state.keymap.help(id, label)
     }
 }
 
@@ -199,7 +200,7 @@ impl Workbench {
     }
 }
 
-pub(super) fn toggle(state: &mut State, tool: Tool, tx: &mut Tx) {
+pub(crate) fn toggle(state: &mut State, tool: Tool, tx: &mut Tx) {
     if tool == Tool::Preview {
         if preview::available(state) {
             preview::toggle(state, tx);
@@ -329,7 +330,7 @@ fn strip(state: &State, tools: &[Tool], dock: Dock, palette: Palette, scale: f32
         .label(tool.label())
         .role("switch")
         .checked(on)
-        .help(tool.help());
+        .help(tool.help(state));
         if dock != Dock::Bottom {
             button = button.w(height).min_w(height).px(0.0).justify_center();
         } else {

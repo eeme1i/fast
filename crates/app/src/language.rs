@@ -53,6 +53,7 @@ struct Connection {
     client: Client,
     options: Options,
     binding: Option<Binding>,
+    restore_pin: bool,
     version: i32,
     sequence: i32,
     last_session: u64,
@@ -236,7 +237,6 @@ fn bind(state: &mut State) -> bool {
             state.editor.set_inline_hints(Vec::new());
             state.editor.set_folds(Vec::new());
             state.language.clear_document();
-            state.language.pinned = None;
             return true;
         }
         return false;
@@ -258,7 +258,14 @@ fn bind(state: &mut State) -> bool {
         }
         state.language.connection = None;
         state.language.clear_document();
-        state.language.pinned = None;
+        if state
+            .language
+            .pinned
+            .as_ref()
+            .is_some_and(|pin| !pin.starts_with(&expected.root))
+        {
+            state.language.pinned = None;
+        }
         state.language.legend = None;
         state.language.message = None;
         match Client::start(expected.clone(), move || waker()) {
@@ -268,6 +275,7 @@ fn bind(state: &mut State) -> bool {
                     client,
                     options: expected,
                     binding: None,
+                    restore_pin: state.language.pinned.is_some(),
                     version: 0,
                     sequence: 0,
                     last_session: u64::MAX,
@@ -441,9 +449,11 @@ pub(crate) fn poll(state: &mut State, now: f64, tx: &mut Tx) -> bool {
     for event in events {
         changed |= response::handle(state, event, tx);
     }
-    if let Some(trigger) =
-        trigger.filter(|_| state.language.ready() && tx.focused() == Some(fast_editor::VIEWPORT))
-    {
+    if let Some(trigger) = trigger.filter(|_| {
+        state.language.ready()
+            && tx.focused() == Some(fast_editor::VIEWPORT)
+            && state.editor.document().selections().len() == 1
+    }) {
         if matches!(trigger.as_str(), "(" | ",") {
             actions::invoke(state, Command::Signature, tx);
         } else {

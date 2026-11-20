@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use fast_theme::tok::Palette;
 use rune::{Color, El, Key, Latest, ScrollSpec, TextEdit, Tx, Waker, col, row, text};
 
-use super::{Tool, dock, item, project, search_field};
-use crate::{State, files, language, preview};
+use super::{item, project, search_field};
+use crate::{
+    State, files,
+    keymap::{ACTIONS, Action},
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum Mode {
@@ -22,177 +25,23 @@ pub(super) struct Picker {
     job: Latest<Vec<Choice>>,
 }
 
-#[derive(Clone, Copy)]
-struct Action {
-    name: &'static str,
-    shortcut: &'static str,
-    run: fn(&mut State, &mut Tx),
-    available: fn(&State) -> bool,
-}
-
-const ALWAYS: fn(&State) -> bool = |_| true;
-const LANGUAGE: fn(&State) -> bool = |state| state.language.ready() && preview::available(state);
-
-const ACTIONS: &[Action] = &[
-    Action {
-        name: "New file",
-        shortcut: "Ctrl+N",
-        run: files::create,
-        available: |state| !state.files.busy(),
-    },
-    Action {
-        name: "Open file",
-        shortcut: "Ctrl+O",
-        run: files::open,
-        available: ALWAYS,
-    },
-    Action {
-        name: "Open project folder",
-        shortcut: "",
-        run: project::choose_root,
-        available: ALWAYS,
-    },
-    Action {
-        name: "Quick open file",
-        shortcut: "Ctrl+P",
-        run: super::quick_open,
-        available: ALWAYS,
-    },
-    Action {
-        name: "Find in Files",
-        shortcut: "Ctrl+Shift+F",
-        run: project::open_search,
-        available: ALWAYS,
-    },
-    Action {
-        name: "Find in document",
-        shortcut: "Ctrl+F",
-        run: |s, tx| s.editor.find(false, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Replace in document",
-        shortcut: "Ctrl+H",
-        run: |s, tx| s.editor.find(true, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Save file",
-        shortcut: "Ctrl+S",
-        run: |s, tx| files::save(s, false, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Save as",
-        shortcut: "Ctrl+Shift+S",
-        run: |s, tx| files::save(s, true, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Close tab",
-        shortcut: "Ctrl+W",
-        run: |s, tx| files::close(s, s.files.active, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Toggle Project files",
-        shortcut: "Alt+1",
-        run: |s, tx| dock::toggle(s, Tool::Project, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Toggle Outline",
-        shortcut: "Alt+2",
-        run: |s, tx| dock::toggle(s, Tool::Outline, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Toggle Problems",
-        shortcut: "Alt+6",
-        run: |s, tx| dock::toggle(s, Tool::Problems, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Toggle Compiler output",
-        shortcut: "",
-        run: |s, tx| dock::toggle(s, Tool::Compiler, tx),
-        available: ALWAYS,
-    },
-    Action {
-        name: "Toggle Preview",
-        shortcut: "Alt+P",
-        run: preview::toggle,
-        available: preview::available,
-    },
-    Action {
-        name: "Export document",
-        shortcut: "",
-        run: preview::export_dialog,
-        available: preview::available,
-    },
-    Action {
-        name: "Quick PDF export",
-        shortcut: "Ctrl+Shift+E",
-        run: preview::quick_export,
-        available: preview::available,
-    },
-    Action {
-        name: "Format document",
-        shortcut: "",
-        run: |s, tx| language::invoke(s, language::Command::Format, tx),
-        available: LANGUAGE,
-    },
-    Action {
-        name: "Go to definition",
-        shortcut: "F12",
-        run: |s, tx| language::invoke(s, language::Command::Definition, tx),
-        available: LANGUAGE,
-    },
-    Action {
-        name: "Find references",
-        shortcut: "Shift+F12",
-        run: |s, tx| language::invoke(s, language::Command::References, tx),
-        available: LANGUAGE,
-    },
-    Action {
-        name: "Rename symbol",
-        shortcut: "F2",
-        run: |s, tx| language::invoke(s, language::Command::Rename, tx),
-        available: LANGUAGE,
-    },
-    Action {
-        name: "Pin main file",
-        shortcut: "",
-        run: language::pin_dialog,
-        available: LANGUAGE,
-    },
-    Action {
-        name: "Unpin main file",
-        shortcut: "",
-        run: |s, tx| language::invoke(s, language::Command::Unpin, tx),
-        available: |s| s.language.pinned.is_some(),
-    },
-    Action {
-        name: "Settings",
-        shortcut: "",
-        run: super::settings::open,
-        available: ALWAYS,
-    },
-];
-
 #[derive(Clone)]
 enum Choice {
-    Command(Action),
+    Command(&'static Action),
     File(PathBuf, String),
 }
 
 impl Choice {
-    fn label(&self) -> String {
+    fn label(&self, state: &State) -> String {
         match self {
-            Self::Command(action) if !action.shortcut.is_empty() => {
-                format!("{}   {}", action.name, action.shortcut)
+            Self::Command(action) => {
+                let shortcut = state.keymap.label(action.id);
+                if shortcut.is_empty() {
+                    action.name.into()
+                } else {
+                    format!("{}   {shortcut}", action.name)
+                }
             }
-            Self::Command(action) => action.name.into(),
             Self::File(_, display) => display.clone(),
         }
     }
@@ -243,7 +92,7 @@ fn choices(state: &State, mode: Mode) -> Vec<Choice> {
                     .iter()
                     .filter(|action| (action.available)(state))
                     .filter_map(|action| {
-                        Some((rank(&query, action.name)?, Choice::Command(*action)))
+                        Some((rank(&query, action.name)?, Choice::Command(action)))
                     }),
             )
         }
@@ -422,7 +271,7 @@ pub(super) fn overlay(state: &State, palette: Palette, scale: f32) -> Option<El>
             item(
                 palette,
                 format!("picker-result-{i}"),
-                &choice.label(),
+                &choice.label(state),
                 24.0,
                 i == selected,
                 move |state, tx| choose(state, i, tx),

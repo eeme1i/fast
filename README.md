@@ -34,6 +34,26 @@ ligatures = false
 
 **Settings** updates the theme, typefaces, font sizes, density, sidebar side, preview dock, and tab placement live. Edit `config.toml` for startup defaults. UI families are `inter`, `system-mono`, and `serif`. Editor families are `system-mono` and `mono`. Density accepts `compact`, `standard`, or `comfortable`. Preview can open on the `left`, `right`, `bottom`, or in a `tab`.
 
+### Editor shortcuts and pasted images
+
+Use Ctrl+D (or Command+D on macOS) to select the word under the caret. Press it again to add the next occurrence. Alt+click adds or removes a caret. Alt+drag selects a rectangle across lines, with each selection ending at the line's last column when a line is shorter. Escape returns to the primary selection.
+
+The keymap is loaded with the rest of `config.toml`. Use `mod` for Command on macOS and Ctrl on Windows and Linux, or use `ctrl`, `alt`, `shift`, or `super` for explicit modifiers. A comma separates alternative shortcuts and `"none"` removes a binding. Fast checks for conflicts across platforms and keeps the last valid configuration.
+
+```toml
+assets_dir = "assets" # under the compiler root
+
+[keymap]
+select-next-occurrence = "mod+d, ctrl+d"
+quick-open = "mod+alt+p"
+toggle-preview = "alt+p"
+# quick-export = "none"
+```
+
+Action IDs include `new-file`, `open-file`, `open-project`, `quick-open`, `command-palette`, `find-in-files`, `find`, `replace`, `save`, `save-as`, `close-tab`, `toggle-project`, `toggle-outline`, `toggle-problems`, `toggle-compiler`, `toggle-preview`, `export`, `quick-export`, `format`, `definition`, `references`, `rename`, `hover`, `complete`, `code-actions`, `pin-main`, `unpin-main`, `settings`, `select-next-occurrence`, `undo`, `redo`, `redo-alternate`, `select-all`, `copy`, `cut`, and `paste`.
+
+Paste a clipboard image in a saved document to write a uniquely named PNG in the assets folder and insert a relative `#image("…")` reference. Plain text paste works in any tab.
+
 ## Workbench
 
 Open files from the Project tree or **Open**. Each tab keeps its edits and undo history as you switch. A dot marks unsaved changes, and **Main** identifies the pinned Typst file. Right-click a Typst tab or project file to pin or unpin it while Tinymist is running.
@@ -43,6 +63,10 @@ Use the tool strips or Alt+1 for Project, Alt+2 for Outline, Alt+6 for Problems,
 Use Ctrl+P for Quick Open, Ctrl+Shift+P for the Command Palette, and Ctrl+Shift+F for Find in Files. Command also works for these shortcuts on macOS. The Project tree starts in the first file’s directory or configured root. Use **Folder** to choose another root. Search respects `.gitignore` and includes unsaved edits in open files. Results are grouped by file, with a live excerpt and a jump to the match.
 
 Find in Files skips binary and media files and files larger than 8 MiB. The results show how many files were skipped during the search.
+
+When a file changes on disk, use **Compare** to review both versions, **Reload** to adopt the disk version, or **Keep editor** to keep your edits. Reload is undoable. Saving an open file checks its last accepted disk version before replacing it.
+
+Starting Fast without a file restores the last session, including tabs, drafts, editor scroll positions, dock layout, and the pinned main file. Session state is stored beside `config.toml` in a hidden `.session.toml` sidecar. Starting with a file opens that file directly.
 
 ## Language tools
 
@@ -96,6 +120,7 @@ cargo build -p fast
 python3 tests/visual/language.py
 python3 tests/visual/preview.py
 python3 tests/visual/workbench.py
+python3 tests/visual/phase5.py
 cargo test --release -p fast-preview --test incremental -- --ignored --nocapture
 ```
 
@@ -108,3 +133,5 @@ The language checks require Tinymist on `PATH`. The Rust integration test also a
 The preview replay saves its captures to `target/visual/preview` and checks rendering, click-to-source, and exported files. Use `--native-only` to skip the Tinymist formats. The release benchmark measures incremental compilation and visible-page rasterization across 20 edits to a 20-page document.
 
 The workbench replay saves dark and light captures to `target/visual/workbench`. It exercises project navigation, dock moves and resizing, dirty tabs, keyboard pickers, workspace search, and live settings.
+
+The Phase 5 replay covers multi-cursor editing, block selection, custom shortcuts, clipboard images, external edits, and workbench recovery. Captures are saved to `target/visual/phase5`.

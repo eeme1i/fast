@@ -19,8 +19,11 @@ pub fn window(state: &State, cx: &mut Cx<State>) -> El {
         .transition(Transition::none())
         .motion(Spring::NONE)
         .hover_motion_within(Anim::INSTANT, Anim::INSTANT)
-        .on_paste(fast_editor::paste::<State>)
+        .on_paste_content(files::assets::paste)
         .child(document_bar(state, palette, hairline));
+    if let Some(banner) = files::external::banner(state, palette, hairline) {
+        root = root.child(banner);
+    }
     root = root.child(workbench::view(state, palette, cx.env().scale));
     if let Some(results) = language::view::results(state, palette) {
         root = root.child(results);
@@ -42,6 +45,9 @@ pub fn window(state: &State, cx: &mut Cx<State>) -> El {
         root = root.child(confirm_close(state, palette, id));
     }
     if let Some(overlay) = preview::export_overlay(state, palette) {
+        root = root.child(overlay);
+    }
+    if let Some(overlay) = files::external::overlay(state, palette) {
         root = root.child(overlay);
     }
     root
@@ -79,7 +85,7 @@ fn document_bar(state: &State, palette: Palette, hairline: f32) -> El {
                 files::create,
             )
             .label("New file")
-            .help("New file (Command/Ctrl+N)"),
+            .help(state.keymap.help("new-file", "New file")),
         )
         .child(button("open-file", "Open", enabled, files::open))
         .child(button("save-file", "Save", enabled, |state, tx| {
@@ -132,7 +138,7 @@ fn document_bar(state: &State, palette: Palette, hairline: f32) -> El {
             workbench::commands,
         )
         .label("Commands")
-        .help("Command Palette (Ctrl+Shift+P)"),
+        .help(state.keymap.help("command-palette", "Command Palette")),
     )
 }
 
@@ -293,11 +299,12 @@ fn status_bar(state: &State, palette: Palette, hairline: f32) -> El {
         );
     }
     if let Some(message) = state
-        .language
-        .message
+        .session_store
+        .error
         .as_deref()
-        .or(state.workbench.layout_error.as_deref())
         .or_else(|| state.files.status())
+        .or(state.language.message.as_deref())
+        .or(state.workbench.layout_error.as_deref())
     {
         bar = bar.child(
             text(message)

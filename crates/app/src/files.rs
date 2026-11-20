@@ -1,7 +1,12 @@
+pub(crate) mod assets;
+pub(crate) mod external;
+pub(crate) mod session;
+
 use std::{
     collections::BTreeMap,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use fast_core::{document::Document, file};
@@ -13,16 +18,18 @@ use crate::State;
 type Loaded = Result<(PathBuf, Editor), String>;
 type Saved = Result<(PathBuf, Document), String>;
 
-#[derive(Default)]
 pub(crate) struct Files {
     pub path: Option<PathBuf>,
     pub session: u64,
     pub buffer_epoch: u64,
     pub active: u64,
     next_tab: u64,
-    saved_revision: u64,
+    saved_revision: Option<u64>,
+    disk: Option<Arc<Document>>,
     parked: BTreeMap<u64, Tab>,
     opening: Option<Target>,
+    external: external::Watch,
+    assets: assets::Paste,
     saving: Option<u64>,
     open_job: Latest<Loaded>,
     save_job: Latest<Saved>,
@@ -33,7 +40,8 @@ pub(crate) struct Files {
 struct Tab {
     path: Option<PathBuf>,
     editor: Editor,
-    saved_revision: u64,
+    saved_revision: Option<u64>,
+    disk: Option<Arc<Document>>,
 }
 
 pub(crate) struct TabInfo<'a> {
@@ -48,14 +56,43 @@ enum Target {
     Bytes(Range<usize>),
 }
 
+impl Default for Files {
+    fn default() -> Self {
+        Self {
+            path: None,
+            session: 0,
+            buffer_epoch: 0,
+            active: 0,
+            next_tab: 0,
+            saved_revision: Some(0),
+            disk: None,
+            parked: BTreeMap::new(),
+            opening: None,
+            external: external::Watch::default(),
+            assets: assets::Paste::default(),
+            saving: None,
+            open_job: Latest::default(),
+            save_job: Latest::default(),
+            confirm_close: None,
+            message: None,
+        }
+    }
+}
+
 impl Files {
     pub fn setup(&self, waker: Waker) {
         self.open_job.set_waker(waker.clone());
-        self.save_job.set_waker(waker);
+        self.save_job.set_waker(waker.clone());
+        self.external.setup(waker.clone());
+        self.assets.setup(waker);
     }
 
     pub fn dirty(&self, editor: &Editor) -> bool {
-        self.saved_revision != editor.document().revision()
+        self.saved_revision != Some(editor.document().revision())
+    }
+
+    pub fn comparing(&self) -> bool {
+        self.external.comparing()
     }
 
     pub fn busy(&self) -> bool {
@@ -69,7 +106,7 @@ impl Files {
             .map(|(&id, tab)| TabInfo {
                 id,
                 path: tab.path.as_deref(),
-                dirty: tab.saved_revision != tab.editor.document().revision(),
+                dirty: tab.saved_revision != Some(tab.editor.document().revision()),
             })
             .collect::<Vec<_>>();
         tabs.push(TabInfo {
@@ -101,7 +138,7 @@ impl Files {
 
     pub fn dirty_buffers(&self) -> impl Iterator<Item = (&Path, &Document)> {
         self.parked.values().filter_map(|tab| {
-            (tab.saved_revision != tab.editor.document().revision())
+            (tab.saved_revision != Some(tab.editor.document().revision()))
                 .then_some((tab.path.as_deref()?, tab.editor.document()))
         })
     }
@@ -116,9 +153,11 @@ impl Files {
         }
     }
 
-    pub fn workspace_saved(&mut self, path: PathBuf, revision: u64) {
+    pub fn workspace_saved(&mut self, path: PathBuf, editor: &Editor) {
         self.path = Some(path);
-        self.saved_revision = revision;
+        self.saved_revision = Some(editor.document().revision());
+        self.disk = Some(disk_snapshot(editor));
+        self.external.invalidate(self.active);
         self.message = Some("Workspace edits saved".into());
     }
 
@@ -136,11 +175,13 @@ impl Files {
                     id,
                     Tab {
                         path: Some(path),
-                        saved_revision: editor.document().revision(),
+                        saved_revision: Some(editor.document().revision()),
+                        disk: Some(disk_snapshot(&editor)),
                         editor,
                     },
                 );
                 self.buffer_epoch += 1;
+                self.external.invalidate(id);
             }
         }
     }
@@ -152,13 +193,18 @@ pub(crate) fn load(path: PathBuf) -> Loaded {
     Ok((file.path, Editor::new(Document::from_rope(file.text))))
 }
 
+fn disk_snapshot(editor: &Editor) -> Arc<Document> {
+    Arc::new(Document::from_rope(editor.document().snapshot()))
+}
+
 fn new_tab(state: &mut State, path: Option<PathBuf>, editor: Editor) -> Tab {
     if let Some(waker) = &state.waker {
         editor.setup(waker.clone());
     }
     Tab {
+        disk: path.as_ref().map(|_| disk_snapshot(&editor)),
         path,
-        saved_revision: editor.document().revision(),
+        saved_revision: Some(editor.document().revision()),
         editor,
     }
 }
@@ -170,10 +216,14 @@ fn swap(state: &mut State, id: u64, tab: Tab, keep: bool) {
         path: std::mem::replace(&mut state.files.path, tab.path),
         saved_revision: std::mem::replace(&mut state.files.saved_revision, tab.saved_revision),
         editor: std::mem::replace(&mut state.editor, tab.editor),
+        disk: std::mem::replace(&mut state.files.disk, tab.disk),
     };
     if keep {
         state.files.parked.insert(previous_id, previous);
+    } else {
+        state.files.external.invalidate(previous_id);
     }
+    state.files.external.rescan();
     state.files.session += 1;
     state.files.message = None;
 }
@@ -213,7 +263,7 @@ pub(crate) fn activate(state: &mut State, id: u64, tx: &mut Tx) {
         swap(state, id, tab, true);
         reveal(state, tx);
     } else if state.files.active == id {
-        focus(state, tx);
+        reveal(state, tx);
     }
 }
 
@@ -257,6 +307,7 @@ pub(crate) fn discard(state: &mut State, id: u64, tx: &mut Tx) {
     } else {
         if state.files.parked.remove(&id).is_some() {
             state.files.buffer_epoch += 1;
+            state.files.external.invalidate(id);
         }
         focus(state, tx);
     }
@@ -339,7 +390,7 @@ fn select_target(state: &mut State, target: Target, tx: &mut Tx) {
     };
     if let Some(target) = target {
         state.editor.jump(target, tx);
-        state.editor.reveal_tab(tx);
+        state.editor.center_caret(tx);
     }
     focus(state, tx);
 }
@@ -389,26 +440,39 @@ fn save_to(state: &mut State, path: PathBuf) {
         .other_buffers()
         .map(|(path, _)| path.to_owned())
         .collect::<Vec<_>>();
+    let current = state.files.path.clone();
+    let expected = state.files.disk.clone();
     state.files.saving = Some(revision);
     state.files.message = None;
-    state
-        .files
-        .save_job
-        .request((path, snapshot, other_paths), |(path, snapshot, others)| {
-            if others.contains(&path)
-                || path
-                    .canonicalize()
-                    .is_ok_and(|resolved| others.contains(&resolved))
+    state.files.save_job.request(
+        (path, snapshot, other_paths, current, expected),
+        |(path, snapshot, others, current, expected)| {
+            let resolved = path.canonicalize().ok();
+            if others.contains(&path) || resolved.as_ref().is_some_and(|path| others.contains(path))
             {
                 return Err(format!("{} is already open in another tab", path.display()));
             }
-            file::save(&path, &snapshot.snapshot())
+            let text = snapshot.snapshot();
+            let saved = if let Some(current) =
+                current.filter(|current| *current == path || resolved.as_ref() == Some(current))
+            {
+                file::save_if_unchanged(
+                    &current,
+                    &text,
+                    expected.as_ref().map(|doc| doc.snapshot()).as_ref(),
+                )
+            } else {
+                file::save(&path, &text)
+            };
+            saved
                 .map(|path| (path, snapshot))
                 .map_err(|error| format!("Couldn't save {}. {error}", path.display()))
-        });
+        },
+    );
 }
 
-pub(crate) fn poll(state: &mut State, tx: &mut Tx) -> bool {
+pub(crate) fn poll(state: &mut State, now: f64, tx: &mut Tx) -> bool {
+    let changed = external::poll(state, now, tx) | assets::poll(state, tx);
     if let Some(result) = state.files.open_job.take() {
         let target = state.files.opening.take().unwrap_or(Target::File);
         match result {
@@ -434,13 +498,17 @@ pub(crate) fn poll(state: &mut State, tx: &mut Tx) -> bool {
         return true;
     }
     if let Some(result) = state.files.save_job.take() {
+        state.files.external.rescan();
+        tx.wake_after(std::time::Duration::ZERO);
         let saved = state.files.saving.take();
         match result {
             Ok((path, snapshot)) => {
                 state.files.path = Some(path);
                 if let Some(revision) = saved {
-                    state.files.saved_revision = revision;
+                    state.files.saved_revision = Some(revision);
                 }
+                state.files.disk = Some(Arc::new(Document::from_rope(snapshot.snapshot())));
+                state.files.external.invalidate(state.files.active);
                 state.files.message = Some("Saved".into());
                 state.language.saved();
                 crate::preview::on_saved(state, snapshot, tx);
@@ -451,5 +519,5 @@ pub(crate) fn poll(state: &mut State, tx: &mut Tx) -> bool {
         tx.instant();
         return true;
     }
-    false
+    changed
 }

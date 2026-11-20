@@ -117,7 +117,7 @@ pub enum EditorFont {
     Mono,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub ui: UiConfig,
@@ -125,6 +125,22 @@ pub struct Config {
     pub lsp: LspConfig,
     pub compiler: CompilerConfig,
     pub export: ExportConfig,
+    pub keymap: BTreeMap<String, String>,
+    pub assets_dir: PathBuf,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            ui: UiConfig::default(),
+            editor: EditorConfig::default(),
+            lsp: LspConfig::default(),
+            compiler: CompilerConfig::default(),
+            export: ExportConfig::default(),
+            keymap: BTreeMap::new(),
+            assets_dir: "assets".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -267,6 +283,8 @@ pub enum ConfigError {
     ExportPpi(u16),
     #[error("export.quick_path must end in .pdf")]
     ExportPath,
+    #[error("assets_dir must be a directory relative to the project root")]
+    AssetsDir,
     #[error("configuration watcher: {0}")]
     Watch(#[from] notify::Error),
 }
@@ -288,6 +306,16 @@ impl Config {
         }
         if !config.export.quick_path.ends_with(".pdf") {
             return Err(ConfigError::ExportPath);
+        }
+        if config.assets_dir.as_os_str().is_empty()
+            || config.assets_dir.components().any(|part| {
+                !matches!(
+                    part,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+        {
+            return Err(ConfigError::AssetsDir);
         }
         Ok(config)
     }

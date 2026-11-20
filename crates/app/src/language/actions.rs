@@ -37,16 +37,23 @@ pub(crate) fn invoke(state: &mut State, command: Command, tx: &mut Tx) {
         tx.instant();
         return;
     }
+    if matches!(command, Command::Unpin) {
+        if state.language.ready() {
+            request(state, Query::pin(None), None);
+        } else {
+            state.language.pinned = None;
+            if let Some(connection) = &mut state.language.connection {
+                connection.restore_pin = false;
+            }
+        }
+        tx.instant();
+        return;
+    }
     if !state.language.ready() {
         return;
     }
     sync(state);
     state.language.message = None;
-    if matches!(command, Command::Unpin) {
-        request(state, Query::pin(None), None);
-        tx.instant();
-        return;
-    }
     let head = state.editor.document().selection().head;
     let Some(params) = at(state, head) else {
         return;
@@ -359,26 +366,12 @@ pub(crate) fn key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             _ => state.language.popup = None,
         }
     }
-    if !state.language.ready() {
-        return false;
+    if event.key == Key::Escape && (state.language.popup.is_some() || state.language.menu) {
+        state.language.popup = None;
+        state.language.menu = false;
+        state.language.hover = None;
+        tx.instant();
+        return true;
     }
-    let command = match &event.key {
-        Key::Command(' ') => Command::Complete,
-        Key::Text(value) if value == " " && event.mods.ctrl => Command::Complete,
-        Key::Function(1) => Command::Hover,
-        Key::Function(2) => Command::Rename,
-        Key::Function(12) if event.mods.shift => Command::References,
-        Key::Function(12) => Command::Definition,
-        Key::Command('.') => Command::Actions,
-        Key::Escape if state.language.popup.is_some() || state.language.menu => {
-            state.language.popup = None;
-            state.language.menu = false;
-            state.language.hover = None;
-            tx.instant();
-            return true;
-        }
-        _ => return false,
-    };
-    invoke(state, command, tx);
-    true
+    false
 }

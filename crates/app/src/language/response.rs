@@ -10,6 +10,15 @@ pub(super) fn handle(state: &mut State, event: Event, tx: &mut Tx) -> bool {
         Event::Status(status) => {
             if matches!(status, Status::Ready { .. }) {
                 state.language.refresh = Some(0.0);
+                if state
+                    .language
+                    .connection
+                    .as_mut()
+                    .is_some_and(|connection| std::mem::take(&mut connection.restore_pin))
+                    && let Some(path) = state.language.pinned.clone()
+                {
+                    super::actions::pin(state, path);
+                }
             } else {
                 state.language.popup = None;
                 state.language.compile = None;

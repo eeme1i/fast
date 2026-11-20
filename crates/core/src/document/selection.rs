@@ -31,7 +31,7 @@ pub(super) fn normalize(selections: impl IntoIterator<Item = Selection>) -> Vec<
         if let Some((previous_index, previous)) = merged.last_mut() {
             let a = previous.range();
             let b = selection.range();
-            if b.start <= a.end {
+            if b.start < a.end || (b.start == a.end && (a.is_empty() || b.is_empty())) {
                 let backward = if index > *previous_index {
                     selection.anchor > selection.head
                 } else {

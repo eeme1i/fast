@@ -1,7 +1,7 @@
 use fast_core::document::{Document, Selection};
 use rune::{Key, KeyEvent, Tx};
 
-use crate::{Editor, Host, VIEWPORT};
+use crate::{Editor, Host};
 
 pub(crate) fn key<S: Host>(state: &mut S, event: &KeyEvent, tx: &mut Tx) -> bool {
     if state.editor_key(event, tx) {
@@ -12,45 +12,12 @@ pub(crate) fn key<S: Host>(state: &mut S, event: &KeyEvent, tx: &mut Tx) -> bool
         editor.preferred_column = None;
     }
     let edits = match &event.key {
-        Key::Text(text) if !event.mods.cmd || event.mods.alt => editor.type_text(text),
+        Key::Text(text) if !event.is_command_chord() => editor.type_text(text),
         Key::Enter => editor.insert_newline(),
         Key::Tab if !event.mods.shift && editor.next_snippet_stop(tx) => return true,
         Key::Tab if !event.mods.shift => editor.document.insert("  ", false),
         Key::Backspace => editor.backspace(),
         Key::Delete => editor.document.delete(false),
-        Key::Command('z') if event.mods.alt => editor.document.redo_alternate(),
-        Key::Command('z') if event.mods.shift => editor.document.redo(),
-        Key::Command('y') => editor.document.redo(),
-        Key::Command('z') => editor.document.undo(),
-        Key::Command('a') => {
-            editor.document.select(Selection {
-                anchor: 0,
-                head: editor.document.len(),
-            });
-            Vec::new()
-        }
-        Key::Command('c' | 'x') => {
-            let selected = editor
-                .document
-                .selections()
-                .iter()
-                .filter(|selection| !selection.is_empty())
-                .map(|selection| editor.document.slice(selection.range()))
-                .collect::<Vec<_>>();
-            if selected.is_empty() {
-                return true;
-            }
-            tx.copy(selected.join(editor.document.ending()));
-            if event.is_command('x') {
-                editor.document.insert("", false)
-            } else {
-                return true;
-            }
-        }
-        Key::Command('v') => {
-            tx.request_paste();
-            return true;
-        }
         Key::Left | Key::Right | Key::Home | Key::End | Key::Up | Key::Down => {
             editor.navigate(event);
             Vec::new()
@@ -59,6 +26,7 @@ pub(crate) fn key<S: Host>(state: &mut S, event: &KeyEvent, tx: &mut Tx) -> bool
             editor.close_find(tx);
             return true;
         }
+        Key::Escape => return editor.single_caret(tx),
         _ => return false,
     };
     editor.focused = true;
@@ -66,13 +34,62 @@ pub(crate) fn key<S: Host>(state: &mut S, event: &KeyEvent, tx: &mut Tx) -> bool
     true
 }
 
-pub fn paste<S: Host>(state: &mut S, text: &str, tx: &mut Tx) {
-    if tx.focused() == Some(VIEWPORT) {
-        state.editor_mut().insert_plain(text, tx);
-    }
+#[derive(Clone, Copy)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    RedoAlternate,
+    SelectAll,
+    Copy,
+    Cut,
+    Paste,
 }
 
 impl Editor {
+    pub fn run(&mut self, command: EditCommand, tx: &mut Tx) {
+        let edits = match command {
+            EditCommand::Undo => self.document.undo(),
+            EditCommand::Redo => self.document.redo(),
+            EditCommand::RedoAlternate => self.document.redo_alternate(),
+            EditCommand::SelectAll => {
+                self.document.select(Selection {
+                    anchor: 0,
+                    head: self.document.len(),
+                });
+                Vec::new()
+            }
+            EditCommand::Copy | EditCommand::Cut => {
+                let mut ranges: Vec<_> = self
+                    .document
+                    .selections()
+                    .iter()
+                    .filter(|selection| !selection.is_empty())
+                    .map(|selection| selection.range())
+                    .collect();
+                if ranges.is_empty() {
+                    return;
+                }
+                ranges.sort_by_key(|range| range.start);
+                let selected = ranges
+                    .into_iter()
+                    .map(|range| self.document.slice(range))
+                    .collect::<Vec<_>>();
+                tx.copy(selected.join(self.document.ending()));
+                if matches!(command, EditCommand::Cut) {
+                    self.document.insert("", false)
+                } else {
+                    return;
+                }
+            }
+            EditCommand::Paste => {
+                tx.request_paste();
+                return;
+            }
+        };
+        self.preferred_column = None;
+        self.changed(edits, tx);
+    }
+
     pub fn insert_plain(&mut self, text: &str, tx: &mut Tx) {
         let edits = self.document.insert(text, false);
         self.changed(edits, tx);
@@ -259,7 +276,7 @@ pub(crate) fn select_word(document: &Document, at: usize) -> Selection {
     }
 }
 
-fn word(grapheme: &str) -> bool {
+pub(super) fn word(grapheme: &str) -> bool {
     grapheme
         .chars()
         .next()

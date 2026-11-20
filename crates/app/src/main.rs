@@ -1,4 +1,5 @@
 mod files;
+mod keymap;
 mod language;
 mod preview;
 mod view;
@@ -21,6 +22,8 @@ struct State {
     config_error: Option<String>,
     watcher_error: Option<String>,
     editor: Editor,
+    keymap: keymap::Keymap,
+    assets_dir: Option<PathBuf>,
     compiler: CompilerConfig,
     export_config: ExportConfig,
     files: files::Files,
@@ -29,6 +32,7 @@ struct State {
     settings_menu: bool,
     workbench: workbench::Workbench,
     waker: Option<Waker>,
+    session_store: files::session::Store,
 }
 
 impl Host for State {
@@ -39,7 +43,7 @@ impl Host for State {
         &mut self.editor
     }
     fn editor_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        workbench::key(self, event, tx) || language::key(self, event, tx)
+        language::key(self, event, tx) || keymap::key(self, event, tx, true)
     }
     fn editor_hover(&mut self, byte: Option<usize>, pointer: Option<PointerPress>, tx: &mut Tx) {
         language::hover(self, byte, pointer, tx);
@@ -53,8 +57,17 @@ impl State {
     fn apply_config(&mut self, config: Result<Option<Config>, ConfigError>) {
         match config {
             Ok(file_config) => {
-                self.config_loaded = file_config.is_some();
+                let loaded = file_config.is_some();
                 let config = file_config.unwrap_or_default();
+                match keymap::Keymap::from_config(&config.keymap) {
+                    Ok(keymap) => self.keymap = keymap,
+                    Err(error) => {
+                        self.config_error = Some(error);
+                        return;
+                    }
+                }
+                self.config_loaded = loaded;
+                self.assets_dir = Some(config.assets_dir);
                 if self.ui.sidebar != config.ui.sidebar {
                     self.workbench.sidebar_changed();
                 }
@@ -91,6 +104,7 @@ fn main() {
         full_size_content: false,
         ..Chrome::DEFAULT
     })
+    .on_quit(files::session::flush)
     .on_ime(|state: &mut State, ime, tx| {
         if tx.focused() != Some(VIEWPORT) {
             return false;
@@ -135,33 +149,32 @@ fn setup(state: &mut State, waker: Waker) {
     state
         .workbench
         .setup(state.config_path.as_deref(), waker.clone());
+    state.session_store.setup(
+        state.config_path.as_deref(),
+        rune::extra_args().is_empty(),
+        waker.clone(),
+    );
     state.waker = Some(waker);
 }
 
 fn poll(state: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let files = files::poll(state, tx);
+    let files = files::poll(state, now, tx);
     let editor = state.editor.poll(now, tx);
     let lsp = language::poll(state, now, tx);
     let preview = preview::poll(state, now, tx);
     let workbench = workbench::poll(state, tx);
-    files || editor || lsp || preview || workbench
+    let session = files::session::poll(state, now, tx);
+    files || editor || lsp || preview || workbench || session
 }
 
 fn window_key(state: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if state.files.confirm_close.is_some() || state.language.workspace.showing() {
         return false;
     }
-    if workbench::key(state, event, tx) {
+    if tx.focused() != Some(VIEWPORT) && keymap::key(state, event, tx, false) {
         return true;
     }
     match event.key {
-        Key::Command('o') => files::open(state, tx),
-        Key::Command('s') => files::save(state, event.mods.shift, tx),
-        Key::Command('f') => state.editor.find(event.mods.alt, tx),
-        Key::Command('h') => state.editor.find(true, tx),
-        Key::Command('e') if event.mods.shift && preview::available(state) => {
-            preview::quick_export(state, tx)
-        }
         Key::Escape if state.editor.has_find() => state.editor.close_find(tx),
         Key::Escape if state.language.menu || state.language.popup.is_some() => {
             state.language.menu = false;
